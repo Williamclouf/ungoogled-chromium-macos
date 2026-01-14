@@ -58,8 +58,9 @@ Note that these sponsorship accounts are under the name of `Qubik65536`. All spo
 
 ### Software requirements
 
-* macOS 10.15+
-* Xcode 12
+* macOS 15.6++
+* Xcode 26.2 17C52 (2025-12-12)
+* SDK 26.2 25C57
 * Homebrew
 * Perl (for creating a `.dmg` package)
 * Node.js
