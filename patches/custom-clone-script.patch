@@ -1,0 +1,253 @@
+--- a/ungoogled-chromium/utils/clone.py	2026-01-16 14:44:43.000000000 +0800
++++ b/ungoogled-chromium/utils/clone.py	2026-01-14 19:09:26.000000000 +0800
+@@ -10,6 +10,7 @@
+ 
+ import re
+ import sys
++import subprocess
+ from argparse import ArgumentParser
+ from os import environ, pathsep
+ from pathlib import Path
+@@ -45,6 +46,29 @@
+ """
+ 
+ 
++def stream_command(command: list[str], **kwargs) -> int:
++    with subprocess.Popen(
++        command,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.STDOUT, # 将错误输出也合并到标准输出
++        text=True,                # 自动将字节流解码为字符串
++        bufsize=1,                # 行缓冲
++        **kwargs
++    ) as process:
++
++        # 实时读取每一行
++        # 注意：如果 text=True，stdout 是 io.TextIOWrapper
++        # 如果 text=False，stdout 是 io.BufferedReader (字节流)
++        assert process.stdout is not None
++        for line in process.stdout:
++            print(line, end="", flush=True)
++
++    return_code = process.returncode
++    if return_code != 0:
++        raise subprocess.CalledProcessError(return_code, command)
++    return return_code
++
++
+ def clone(args): # pylint: disable=too-many-branches, too-many-locals, too-many-statements
+     """Clones, downloads, and generates the required sources"""
+     get_logger().info('Setting up cloning environment')
+@@ -67,106 +91,113 @@
+     # Google has some regex strings that aren't escaped properly or set as raw
+     environ["PYTHONWARNINGS"] = "ignore::SyntaxWarning"
+ 
+-    # depth=2 since generating LASTCHANGE and gpu_lists_version.h require at least two commits
+-    get_logger().info('Cloning chromium source: %s', chromium_version)
+-    if (args.output / '.git').exists():
+-        run(['git', 'fetch', 'origin', 'tag', chromium_version, '--depth=2'],
+-            cwd=args.output,
+-            check=True)
+-        run(['git', 'reset', '--hard', 'FETCH_HEAD'], cwd=args.output, check=True)
+-        run(['git', 'clean', '-ffdx', '-e', 'uc_staging'], cwd=args.output, check=True)
+-    else:
+-        run([
+-            'git', 'clone', '-c', 'advice.detachedHead=false', '-b', chromium_version, '--depth=2',
+-            "https://chromium.googlesource.com/chromium/src",
+-            str(args.output)
+-        ],
+-            check=True)
+-
+-    # Set up staging directory
+-    ucstaging.mkdir(exist_ok=True)
+-
+-    get_logger().info('Cloning depot_tools')
+-    dt_commit = re.search(r"depot_tools\.git'\s*\+\s*'@'\s*\+\s*'([^']+)',",
+-                          Path(args.output / 'DEPS').read_text(encoding=ENCODING)).group(1)
+-    if not dt_commit:
+-        get_logger().error('Unable to obtain commit for depot_tools checkout')
+-        sys.exit(1)
+-    if not dtpath.exists():
+-        dtpath.mkdir()
+-        run(['git', 'init', '-q'], cwd=dtpath, check=True)
+-        run([
+-            'git', 'remote', 'add', 'origin',
+-            'https://chromium.googlesource.com/chromium/tools/depot_tools'
+-        ],
+-            cwd=dtpath,
+-            check=True)
+-    run(['git', 'fetch', '--depth=1', 'origin', dt_commit], cwd=dtpath, check=True)
+-    run(['git', 'reset', '--hard', dt_commit], cwd=dtpath, check=True)
+-    run(['git', 'clean', '-ffdx'], cwd=dtpath, check=True)
+-    if iswin:
+-        (dtpath / 'git.bat').write_text('git')
+-    # Apply changes to gclient
+-    run(['git', 'apply', '--ignore-whitespace'],
+-        input=Path(__file__).with_name('depot_tools.patch').read_text(encoding=ENCODING).replace(
+-            'UC_OUT', str(args.output)).replace('UC_STAGING',
+-                                                str(ucstaging)).replace('GSUVER', gsuver),
+-        cwd=dtpath,
+-        check=True,
+-        universal_newlines=True)
+-
+-    # Manualy set up the gsutil directory for newer versions of Python
+-    get_logger().info('Cloning gsutil')
+-    if not gsupath.exists():
+-        gsupath.mkdir(parents=True)
+-        run(['git', 'init', '-q'], cwd=gsupath, check=True)
+-        run(['git', 'remote', 'add', 'origin', 'https://github.com/GoogleCloudPlatform/gsutil'],
+-            cwd=gsupath,
+-            check=True)
+-    run(['git', 'fetch', '--depth=1', 'origin', f'v{gsuver}'], cwd=gsupath, check=True)
+-    run(['git', 'reset', '--hard', 'FETCH_HEAD'], cwd=gsupath, check=True)
+-    run(['git', 'clean', '-ffdx'], cwd=gsupath, check=True)
+-    get_logger().info('Updating gsutil submodules')
+-    run(['git', 'submodule', 'update', '--init', '--recursive', '--depth=1', '-q'],
+-        cwd=gsupath,
+-        check=True)
+-    # apitools needs to be set to a newer commit for newer versions of Python
+-    run(['git', 'fetch', 'origin', 'f0dfa4e3fcb510d7d27389e011198d9f176026e2'],
+-        cwd=(gsupath / 'third_party' / 'apitools'),
+-        check=True)
+-    run(['git', 'reset', '--hard', 'FETCH_HEAD'],
+-        cwd=(gsupath / 'third_party' / 'apitools'),
+-        check=True)
+-    (gsupath / 'install.flag').write_text('This flag file is dropped by clone.py')
++    # # depth=2 since generating LASTCHANGE and gpu_lists_version.h require at least two commits
++    # get_logger().info('Cloning chromium source: %s', chromium_version)
++    # if (args.output / '.git').exists():
++    #     run(['git', 'fetch', 'origin', 'tag', chromium_version, '--depth=2'],
++    #         cwd=args.output,
++    #         check=True)
++    #     run(['git', 'reset', '--hard', 'FETCH_HEAD'], cwd=args.output, check=True)
++    #     run(['git', 'clean', '-ffdx', '-e', 'uc_staging'], cwd=args.output, check=True)
++    # else:
++    #     run([
++    #         'git', 'clone', '-c', 'advice.detachedHead=false', '-b', chromium_version, '--depth=2',
++    #         "https://chromium.googlesource.com/chromium/src",
++    #         str(args.output)
++    #     ],
++    #         check=True)
++
++    # # Set up staging directory
++    # ucstaging.mkdir(exist_ok=True)
++
++    # get_logger().info('Cloning depot_tools')
++    # dt_commit = re.search(r"depot_tools\.git'\s*\+\s*'@'\s*\+\s*'([^']+)',",
++    #                       Path(args.output / 'DEPS').read_text(encoding=ENCODING)).group(1)
++    # if not dt_commit:
++    #     get_logger().error('Unable to obtain commit for depot_tools checkout')
++    #     sys.exit(1)
++    # if not dtpath.exists():
++    #     dtpath.mkdir()
++    #     run(['git', 'init', '-q'], cwd=dtpath, check=True)
++    #     run([
++    #         'git', 'remote', 'add', 'origin',
++    #         'https://chromium.googlesource.com/chromium/tools/depot_tools'
++    #     ],
++    #         cwd=dtpath,
++    #         check=True)
++    # run(['git', 'fetch', '--depth=1', 'origin', dt_commit], cwd=dtpath, check=True)
++    # run(['git', 'reset', '--hard', dt_commit], cwd=dtpath, check=True)
++    # run(['git', 'clean', '-ffdx'], cwd=dtpath, check=True)
++    # if iswin:
++    #     (dtpath / 'git.bat').write_text('git')
++    # # Apply changes to gclient
++    # run(['git', 'apply', '--ignore-whitespace'],
++    #     input=Path(__file__).with_name('depot_tools.patch').read_text(encoding=ENCODING).replace(
++    #         'UC_OUT', str(args.output)).replace('UC_STAGING',
++    #                                             str(ucstaging)).replace('GSUVER', gsuver),
++    #     cwd=dtpath,
++    #     check=True,
++    #     universal_newlines=True)
++
++    # # Manualy set up the gsutil directory for newer versions of Python
++    # get_logger().info('Cloning gsutil')
++    # if not gsupath.exists():
++    #     gsupath.mkdir(parents=True)
++    #     run(['git', 'init', '-q'], cwd=gsupath, check=True)
++    #     run(['git', 'remote', 'add', 'origin', 'https://github.com/GoogleCloudPlatform/gsutil'],
++    #         cwd=gsupath,
++    #         check=True)
++    # run(['git', 'fetch', '--depth=1', 'origin', f'v{gsuver}'], cwd=gsupath, check=True)
++    # run(['git', 'reset', '--hard', 'FETCH_HEAD'], cwd=gsupath, check=True)
++    # run(['git', 'clean', '-ffdx'], cwd=gsupath, check=True)
++    # get_logger().info('Updating gsutil submodules')
++    # run(['git', 'submodule', 'update', '--init', '--recursive', '--depth=1', '-q'],
++    #     cwd=gsupath,
++    #     check=True)
++    # # apitools needs to be set to a newer commit for newer versions of Python
++    # run(['git', 'fetch', 'origin', 'f0dfa4e3fcb510d7d27389e011198d9f176026e2'],
++    #     cwd=(gsupath / 'third_party' / 'apitools'),
++    #     check=True)
++    # run(['git', 'reset', '--hard', 'FETCH_HEAD'],
++    #     cwd=(gsupath / 'third_party' / 'apitools'),
++    #     check=True)
++    # (gsupath / 'install.flag').write_text('This flag file is dropped by clone.py')
++
++    # # gn requires full history to be able to generate last_commit_position.h
++    # get_logger().info('Cloning gn')
++    # gn_commit = re.search(r"gn_version': 'git_revision:([^']+)',",
++    #                       Path(args.output / 'DEPS').read_text(encoding=ENCODING)).group(1)
++    # if not gn_commit:
++    #     get_logger().error('Unable to obtain commit for gn checkout')
++    #     sys.exit(1)
++    # if gnpath.exists():
++    #     run(['git', 'fetch'], cwd=gnpath, check=True)
++    # else:
++    #     run(['git', 'clone', "https://gn.googlesource.com/gn", str(gnpath)], check=True)
++    # run(['git', 'reset', '--hard', gn_commit], cwd=gnpath, check=True)
++    # run(['git', 'clean', '-ffdx'], cwd=gnpath, check=True)
++
++    # get_logger().info('Running gsync')
++    # if args.custom_config:
++    #     copy(args.custom_config, ucstaging / '.gclient').replace('UC_OUT', str(args.output))
++    # else:
++    #     (ucstaging / '.gclient').write_text(GC_CONFIG.replace('UC_OUT', str(args.output)))
++    # gcpath = dtpath / 'gclient'
++    # if iswin:
++    #     gcpath = gcpath.with_suffix('.bat')
++
++    # # -f, -D, and -R forces a hard reset on changes and deletes deps that have been removed
++    # _args = [
++    #     str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks'
++    # ]
++    # get_logger().info(' '.join(_args))
++    # try:
++    #     stream_command(_args, cwd=args.output)
++    # except subprocess.CalledProcessError as e:
++    #     get_logger().error('gclient sync failed with exit code %d', e.returncode)
++    #     sys.exit(e.returncode)
+ 
+-    # gn requires full history to be able to generate last_commit_position.h
+-    get_logger().info('Cloning gn')
+-    gn_commit = re.search(r"gn_version': 'git_revision:([^']+)',",
+-                          Path(args.output / 'DEPS').read_text(encoding=ENCODING)).group(1)
+-    if not gn_commit:
+-        get_logger().error('Unable to obtain commit for gn checkout')
+-        sys.exit(1)
+-    if gnpath.exists():
+-        run(['git', 'fetch'], cwd=gnpath, check=True)
+-    else:
+-        run(['git', 'clone', "https://gn.googlesource.com/gn", str(gnpath)], check=True)
+-    run(['git', 'reset', '--hard', gn_commit], cwd=gnpath, check=True)
+-    run(['git', 'clean', '-ffdx'], cwd=gnpath, check=True)
+-
+-    get_logger().info('Running gsync')
+-    if args.custom_config:
+-        copy(args.custom_config, ucstaging / '.gclient').replace('UC_OUT', str(args.output))
+-    else:
+-        (ucstaging / '.gclient').write_text(GC_CONFIG.replace('UC_OUT', str(args.output)))
+-    gcpath = dtpath / 'gclient'
+-    if iswin:
+-        gcpath = gcpath.with_suffix('.bat')
+-    # -f, -D, and -R forces a hard reset on changes and deletes deps that have been removed
+-    run([
+-        str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks',
+-        f'--sysroot={args.sysroot}'
+-    ],
+-        check=True)
++    # raise RuntimeError('sync success, you can backup src dir and continue later')
+ 
+     # Follow tarball procedure:
+     # https://source.chromium.org/chromium/chromium/tools/build/+/main:recipes/recipes/publish_tarball.py

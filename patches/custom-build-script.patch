@@ -1,0 +1,10 @@
+--- a/build.sh
++++ b/build.sh
+@@ -67,6 +67,6 @@
+ 
+ ./out/Default/gn gen out/Default --fail-on-unused-args
+ 
+-ninja -C out/Default chrome chromedriver
++ninja -l 8.0 -j 8 -C out/Default chrome chromedriver
+ 
+ "$_root_dir/sign_and_package_app.sh"
